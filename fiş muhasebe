@@ -1,0 +1,2129 @@
+# -*- coding: utf-8 -*-
+# Uygulama adı: Özman Dayanıklı Tüketim Malları - Muhasebe Uygulaması
+# Versiyon: 5.0
+# Geliştirmeler: Muhasebe modülü, gelir/gider takibi, gelişmiş kontrol paneli ve raporlama.
+
+import sys
+import sqlite3
+import base64
+import csv
+from datetime import datetime, timedelta
+from pathlib import Path
+from decimal import Decimal, ROUND_HALF_UP
+
+# PySide6 Kütüphaneleri
+from PySide6.QtCore import Qt, QDate, Signal, QSize, QRegularExpression, QUrl, QStringListModel
+from PySide6.QtGui import (QAction, QTextDocument, QPixmap, QIcon, QColor, QFont, QDoubleValidator, QIntValidator,
+                           QRegularExpressionValidator, QDesktopServices)
+from PySide6.QtWidgets import (
+    QApplication, QWidget, QLineEdit, QTextEdit, QPushButton,
+    QVBoxLayout, QHBoxLayout, QMessageBox, QFileDialog, QTableWidget,
+    QTableWidgetItem, QHeaderView, QGroupBox, QFormLayout, QMainWindow,
+    QToolBar, QStatusBar, QAbstractItemView, QLabel, QSizePolicy, QSpacerItem,
+    QDateEdit, QTabWidget, QComboBox, QMenu, QDialog, QDialogButtonBox,
+    QCheckBox, QFrame, QStyleFactory, QSpinBox, QCompleter
+)
+from PySide6.QtPrintSupport import QPrinter, QPrintDialog
+
+# Basit, modern mavi daire içinde ÖD logosu (base64 PNG)
+LOGO_BASE64 = b"""
+iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAABO0lEQVR4nO3WsQ2DMBAF0LdwDVIhAUk9+gATf
+iQgFjMPs2irjjvt1H6suAAYJknjddz9G82nUNjC9AQAAAAAAAAAAAKCBzQ5X02Et2rEJXQyAVFmQOHLJ+PRj
+o7K0gnRDSukmh8oDl/5aU7Wc6Yuvm4vy9TbVJrxqXXWv8RAlhL7SujRTbC2pt0tj7PYmLR1OdcRbjbQwkr6n
+jo5rQ4COcZtB2Q42uY4UgCjWybp7oXShJqYwTsRUlxJpwHg6Jw+44FxDF/g5mWAW+rw+7xHWf6fJr9mBgAA
+AAAAAAAAAACAb64A5COTvC6IAAAAASUVORK5CYII=
+"""
+
+DB_FILE = "on_fis_pro_v5.db"
+
+# MODERN STİL ŞABLONLARI (Değişiklik yok)
+MODERN_LIGHT_THEME_STYLESHEET = """
+    QWidget {
+        background-color: #f0f4f8;
+        color: #1f2937;
+        font-family: "Segoe UI", Roboto, "Helvetica Neue", Arial;
+        font-size: 10pt;
+    }
+    QGroupBox {
+        background-color: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        margin-top: 20px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+    }
+    QGroupBox::title {
+        subcontrol-origin: margin;
+        subcontrol-position: top left;
+        padding: 6px 12px;
+        color: #4b5563;
+        font-weight: 600;
+        margin-left: 10px;
+    }
+    QLineEdit, QTextEdit, QDateEdit, QComboBox, QSpinBox {
+        background-color: #f9fafb;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        padding: 8px 12px;
+        color: #374151;
+        box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.04);
+    }
+    QLineEdit:focus, QTextEdit:focus, QDateEdit:focus, QComboBox:focus, QSpinBox:focus {
+        border: 1px solid #3b82f6;
+        box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.25);
+    }
+    QPushButton {
+        background: qlineargradient(x1:0 y1:0, x2:0 y2:1, stop:0 #3b82f6, stop:1 #2563eb);
+        color: white;
+        padding: 10px 18px;
+        border-radius: 10px;
+        border: none;
+        font-weight: 600;
+        min-height: 38px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    }
+    QPushButton:hover { background: qlineargradient(x1:0 y1:0, x2:0 y2:1, stop:0 #4f9cff, stop:1 #2b6fdc); }
+    QPushButton:pressed { padding-top: 12px; padding-bottom: 8px; }
+    QPushButton[accent="neutral"] {
+        background: #f3f4f6;
+        color: #374151;
+        border: 1px solid #d1d5db;
+    }
+    QPushButton[danger="true"] {
+        background: qlineargradient(x1:0 y1:0, x2:0 y2:1, stop:0 #ef4444, stop:1 #dc2626);
+    }
+    QHeaderView::section {
+        background-color: #e2e8f0;
+        padding: 10px;
+        border: none;
+        color: #374151;
+        font-weight: 700;
+        font-size: 10pt;
+        border-bottom: 2px solid #cbd5e1;
+    }
+    QTableWidget {
+        background-color: #ffffff;
+        gridline-color: #e2e8f0;
+        border-radius: 8px;
+        border: 1px solid #e2e8f0;
+        selection-background-color: rgba(59,130,246,0.12);
+        selection-color: #1f2937;
+    }
+    QTableWidget::item { padding: 10px; border-bottom: 1px solid #e5e7eb; }
+    QTabWidget::pane { border: 1px solid #e5e7eb; border-radius: 12px; padding: 10px; }
+    QTabBar::tab {
+        background: #e5e7eb;
+        color: #6b7280;
+        padding: 12px 24px;
+        border-top-left-radius: 8px;
+        border-top-right-radius: 8px;
+        border: none;
+        min-width: 120px;
+    }
+    QTabBar::tab:selected {
+        background: #ffffff;
+        color: #1f2937;
+        font-weight: 700;
+        margin-top: -2px;
+    }
+    QFrame#logoHeader {
+        background-color: #ffffff;
+        border-bottom: 1px solid #e5e7eb;
+        padding: 10px;
+    }
+    QLabel.dashboardCardLabel {
+        font-size: 11pt;
+        color: #4b5563;
+    }
+    QLabel.dashboardCardValue {
+        font-size: 18pt;
+        font-weight: bold;
+        color: #1f2937;
+    }
+    QToolBar {
+        background-color: #ffffff;
+        border-bottom: 1px solid #e5e7eb;
+        spacing: 10px;
+        padding: 5px;
+    }
+    QToolButton {
+        background-color: transparent;
+        border: none;
+        padding: 5px;
+    }
+    QToolButton:hover {
+        background-color: #e5e7eb;
+        border-radius: 5px;
+    }
+    QStatusBar {
+        background-color: #ffffff;
+        border-top: 1px solid #e5e7eb;
+    }
+"""
+MODERN_DARK_THEME_STYLESHEET = """
+    QWidget {
+        background-color: #1f2937;
+        color: #e5e7eb;
+        font-family: "Segoe UI", Roboto, "Helvetica Neue", Arial;
+        font-size: 10pt;
+    }
+    QGroupBox {
+        background-color: #374151;
+        border: 1px solid #4b5563;
+        border-radius: 12px;
+        margin-top: 20px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
+    }
+    QGroupBox::title {
+        subcontrol-origin: margin;
+        subcontrol-position: top left;
+        padding: 6px 12px;
+        color: #9ca3af;
+        font-weight: 600;
+        margin-left: 10px;
+    }
+    QLineEdit, QTextEdit, QDateEdit, QComboBox, QSpinBox {
+        background-color: #4b5563;
+        border: 1px solid #6b7280;
+        border-radius: 8px;
+        padding: 8px 12px;
+        color: #e5e7eb;
+        box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.1);
+    }
+    QLineEdit:focus, QTextEdit:focus, QDateEdit:focus, QComboBox:focus, QSpinBox:focus {
+        border: 1px solid #63b3ed;
+        box-shadow: 0 0 0 3px rgba(99, 179, 237, 0.25);
+    }
+    QPushButton {
+        background: qlineargradient(x1:0 y1:0, x2:0 y2:1, stop:0 #4299e1, stop:1 #3182ce);
+        color: white;
+        padding: 10px 18px;
+        border-radius: 10px;
+        border: none;
+        font-weight: 600;
+        min-height: 38px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+    }
+    QPushButton:hover { background: qlineargradient(x1:0 y1:0, x2:0 y2:1, stop:0 #63b3ed, stop:1 #4c8ebc); }
+    QPushButton:pressed { padding-top: 12px; padding-bottom: 8px; }
+    QPushButton[accent="neutral"] {
+        background: #4b5563;
+        color: #d1d5db;
+        border: 1px solid #6b7280;
+    }
+    QPushButton[danger="true"] {
+        background: qlineargradient(x1:0 y1:0, x2:0 y2:1, stop:0 #e53e3e, stop:1 #c53030);
+    }
+    QHeaderView::section {
+        background-color: #4b5563;
+        padding: 10px;
+        border: none;
+        color: #e5e7eb;
+        font-weight: 700;
+        font-size: 10pt;
+        border-bottom: 2px solid #6b7280;
+    }
+    QTableWidget {
+        background-color: #374151;
+        gridline-color: #4b5563;
+        border-radius: 8px;
+        border: 1px solid #4b5563;
+        selection-background-color: rgba(99,179,237,0.12);
+        selection-color: #f3f4f6;
+    }
+    QTableWidget::item { padding: 10px; border-bottom: 1px solid #4b5563; }
+    QTabWidget::pane { border: 1px solid #4b5563; border-radius: 12px; padding: 10px; }
+    QTabBar::tab {
+        background: #4b5563;
+        color: #9ca3af;
+        padding: 12px 24px;
+        border-top-left-radius: 8px;
+        border-top-right-radius: 8px;
+        border: none;
+        min-width: 120px;
+    }
+    QTabBar::tab:selected {
+        background: #374151;
+        color: #e5e7eb;
+        font-weight: 700;
+        margin-top: -2px;
+    }
+    QFrame#logoHeader {
+        background-color: #374151;
+        border-bottom: 1px solid #4b5563;
+        padding: 10px;
+    }
+    QLabel.dashboardCardLabel {
+        font-size: 11pt;
+        color: #9ca3af;
+    }
+    QLabel.dashboardCardValue {
+        font-size: 18pt;
+        font-weight: bold;
+        color: #e5e7eb;
+    }
+    QToolBar {
+        background-color: #374151;
+        border-bottom: 1px solid #4b5563;
+        spacing: 10px;
+        padding: 5px;
+    }
+    QToolButton {
+        background-color: transparent;
+        border: none;
+        padding: 5px;
+    }
+    QToolButton:hover {
+        background-color: #4b5563;
+        border-radius: 5px;
+    }
+    QStatusBar {
+        background-color: #374151;
+        border-top: 1px solid #4b5563;
+    }
+"""
+
+CREATE_TABLES_SQL = """
+CREATE TABLE IF NOT EXISTS receipts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT,
+    phone TEXT,
+    address TEXT,
+    tc TEXT,
+    created_at TEXT,
+    is_deleted INTEGER DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS products (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code TEXT UNIQUE,
+    name TEXT,
+    price REAL,
+    stock_quantity INTEGER DEFAULT 0,
+    min_stock INTEGER DEFAULT 5,
+    description TEXT
+);
+
+CREATE TABLE IF NOT EXISTS receipt_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    receipt_id INTEGER,
+    product_code TEXT,
+    quantity INTEGER,
+    price REAL,
+    FOREIGN KEY(receipt_id) REFERENCES receipts(id),
+    FOREIGN KEY(product_code) REFERENCES products(code)
+);
+
+-- YENİ ÖZELLİK: Gelir ve giderleri kaydetmek için yeni tablo
+CREATE TABLE IF NOT EXISTS income_expenses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    type TEXT CHECK(type IN ('income', 'expense')) NOT NULL,
+    description TEXT,
+    amount REAL NOT NULL,
+    created_at TEXT
+);
+"""
+
+
+class AboutDialog(QDialog):
+    # ... (Kodda değişiklik yok, olduğu gibi bırakıldı)
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Hakkında")
+        self.resize(400, 250)
+
+        layout = QVBoxLayout(self)
+
+        logo_pixmap = QPixmap()
+        logo_pixmap.loadFromData(base64.b64decode(LOGO_BASE64))
+        logo_label = QLabel()
+        logo_label.setPixmap(logo_pixmap.scaled(64, 64, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        logo_label.setAlignment(Qt.AlignCenter)
+
+        title_label = QLabel("<h2>Özman Ön Fiş Uygulaması</h2>")
+        title_label.setAlignment(Qt.AlignCenter)
+
+        version_label = QLabel("<b>Versiyon:</b> 5.0")
+        developer_label = QLabel("<b>Geliştirici:</b> Özman Dtm")
+        info_label = QLabel(
+            "Bu uygulama, ön fişlerinizi ve muhasebe kayıtlarınızı hızlı ve düzenli bir şekilde oluşturmanızı, kaydetmenizi ve yönetmenizi sağlar.")
+        info_label.setWordWrap(True)
+
+        layout.addWidget(logo_label)
+        layout.addWidget(title_label)
+        layout.addWidget(version_label)
+        layout.addWidget(developer_label)
+        layout.addWidget(info_label)
+        layout.addStretch()
+
+        self.button_box = QDialogButtonBox(QDialogButtonBox.Ok)
+        self.button_box.accepted.connect(self.accept)
+        layout.addWidget(self.button_box)
+
+
+class LoginWindow(QWidget):
+    # ... (Kodda değişiklik yok, olduğu gibi bırakıldı)
+    login_successful = Signal()
+
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Ön Fiş Uygulaması - Giriş")
+        self.resize(350, 200)
+
+        pixmap = QPixmap()
+        pixmap.loadFromData(base64.b64decode(LOGO_BASE64))
+        self.setWindowIcon(QIcon(pixmap))
+
+        self.setStyleSheet(MODERN_LIGHT_THEME_STYLESHEET)
+        self.layout = QVBoxLayout(self)
+
+        self.title_label = QLabel("Ön Fiş Özman Dtm")
+        self.title_label.setAlignment(Qt.AlignCenter)
+        self.title_label.setStyleSheet("font-size: 24pt; font-weight: 700; color: #2563eb;")
+
+        self.username_input = QLineEdit()
+        self.username_input.setPlaceholderText("Kullanıcı Adı")
+        self.username_input.setFocus()
+        self.password_input = QLineEdit()
+        self.password_input.setPlaceholderText("Şifre")
+        self.password_input.setEchoMode(QLineEdit.Password)
+
+        self.login_button = QPushButton("Giriş Yap")
+        self.login_button.clicked.connect(self.check_login)
+
+        self.error_label = QLabel("")
+        self.error_label.setStyleSheet("color: #dc2626; font-weight: bold;")
+        self.error_label.setAlignment(Qt.AlignCenter)
+
+        self.layout.addStretch()
+        self.layout.addWidget(self.title_label)
+        self.layout.addWidget(self.username_input)
+        self.layout.addWidget(self.password_input)
+        self.layout.addWidget(self.login_button)
+        self.layout.addWidget(self.error_label)
+        self.layout.addStretch()
+
+    def check_login(self):
+        if self.username_input.text() == "özman" and self.password_input.text() == "12345":
+            self.error_label.setText("")
+            self.login_successful.emit()
+            self.hide()
+        else:
+            self.error_label.setText("Hatalı kullanıcı adı veya şifre!")
+
+
+class Database:
+    def __init__(self, path=DB_FILE):
+        self.path = Path(path)
+        self.conn = sqlite3.connect(str(self.path))
+        self.ensure_tables()
+
+    def ensure_tables(self):
+        cur = self.conn.cursor()
+        cur.executescript(CREATE_TABLES_SQL)
+        self.conn.commit()
+
+    # Fiş ile ilgili metotlar (değişiklik yok)
+    def insert_receipt(self, name, phone, address, tc):
+        cur = self.conn.cursor()
+        now = datetime.now().isoformat(sep=" ", timespec="seconds")
+        cur.execute(
+            "INSERT INTO receipts (name, phone, address, tc, created_at, is_deleted) VALUES (?, ?, ?, ?, ?, 0)",
+            (name, phone, address, tc, now)
+        )
+        self.conn.commit()
+        return cur.lastrowid
+
+    def insert_receipt_item(self, receipt_id, product_code, quantity, price):
+        cur = self.conn.cursor()
+        cur.execute("UPDATE products SET stock_quantity = stock_quantity - ? WHERE code = ?",
+                    (quantity, product_code))
+        cur.execute(
+            "INSERT INTO receipt_items (receipt_id, product_code, quantity, price) VALUES (?, ?, ?, ?)",
+            (receipt_id, product_code, quantity, price)
+        )
+        self.conn.commit()
+
+    def update_receipt(self, rec_id, name, phone, address, tc, old_items):
+        cur = self.conn.cursor()
+        for item in old_items:
+            product_code = item[4]
+            quantity = item[2]
+            cur.execute("UPDATE products SET stock_quantity = stock_quantity + ? WHERE code = ?",
+                        (quantity, product_code))
+
+        cur.execute(
+            "UPDATE receipts SET name=?, phone=?, address=?, tc=? WHERE id=?",
+            (name, phone, address, tc, rec_id)
+        )
+        self.conn.commit()
+        cur.execute("DELETE FROM receipt_items WHERE receipt_id=?", (rec_id,))
+        self.conn.commit()
+
+    def fetch_receipt_items(self, receipt_id):
+        cur = self.conn.cursor()
+        cur.execute(
+            "SELECT ri.id, p.name, ri.quantity, ri.price, p.code FROM receipt_items ri INNER JOIN products p ON ri.product_code = p.code WHERE ri.receipt_id = ?",
+            (receipt_id,)
+        )
+        return cur.fetchall()
+
+    def remove_receipt_item(self, item_id):
+        cur = self.conn.cursor()
+        cur.execute("SELECT product_code, quantity FROM receipt_items WHERE id = ?", (item_id,))
+        product_code, quantity = cur.fetchone()
+        cur.execute("UPDATE products SET stock_quantity = stock_quantity + ? WHERE code = ?",
+                    (quantity, product_code))
+        cur.execute("DELETE FROM receipt_items WHERE id=?", (item_id,))
+        self.conn.commit()
+
+    def soft_delete_receipt(self, rec_id):
+        cur = self.conn.cursor()
+        cur.execute("SELECT product_code, quantity FROM receipt_items WHERE receipt_id = ?", (rec_id,))
+        items = cur.fetchall()
+        for product_code, quantity in items:
+            cur.execute("UPDATE products SET stock_quantity = stock_quantity + ? WHERE code = ?",
+                        (quantity, product_code))
+        cur.execute("UPDATE receipts SET is_deleted=1 WHERE id=?", (rec_id,))
+        self.conn.commit()
+
+    def restore_receipt(self, rec_id):
+        cur = self.conn.cursor()
+        cur.execute("SELECT product_code, quantity FROM receipt_items WHERE receipt_id = ?", (rec_id,))
+        items = cur.fetchall()
+        for product_code, quantity in items:
+            cur.execute("UPDATE products SET stock_quantity = stock_quantity - ? WHERE code = ?",
+                        (quantity, product_code))
+        cur.execute("UPDATE receipts SET is_deleted=0 WHERE id=?", (rec_id,))
+        self.conn.commit()
+
+    def hard_delete_receipt(self, rec_id):
+        cur = self.conn.cursor()
+        cur.execute("SELECT product_code, quantity FROM receipt_items WHERE receipt_id = ?", (rec_id,))
+        items = cur.fetchall()
+        if items:
+            for product_code, quantity in items:
+                cur.execute("UPDATE products SET stock_quantity = stock_quantity + ? WHERE code = ?",
+                            (quantity, product_code))
+        cur.execute("DELETE FROM receipt_items WHERE receipt_id=?", (rec_id,))
+        cur.execute("DELETE FROM receipts WHERE id=?", (rec_id,))
+        self.conn.commit()
+
+    def fetch_all_receipts(self, only_deleted=False, search_term="", start_date=None, end_date=None):
+        cur = self.conn.cursor()
+        sql_query = "SELECT id, name, phone, address, tc, created_at, is_deleted FROM receipts "
+        params = []
+        where_clauses = []
+
+        if only_deleted:
+            where_clauses.append("is_deleted = 1")
+        else:
+            where_clauses.append("is_deleted = 0")
+
+        if search_term.strip():
+            search_term_like = f"%{search_term.strip().lower()}%"
+            where_clauses.append(
+                "(LOWER(name) LIKE ? OR LOWER(phone) LIKE ? OR LOWER(tc) LIKE ?)")
+            params.extend([search_term_like, search_term_like, search_term_like])
+
+        if start_date and end_date:
+            start_date_str = start_date.toString("yyyy-MM-dd 00:00:00")
+            end_date_str = end_date.toString("yyyy-MM-dd 23:59:59")
+            where_clauses.append("created_at BETWEEN ? AND ?")
+            params.extend([start_date_str, end_date_str])
+
+        if where_clauses:
+            sql_query += " WHERE " + " AND ".join(where_clauses)
+
+        sql_query += " ORDER BY id DESC"
+        cur.execute(sql_query, tuple(params))
+        return cur.fetchall()
+
+    def fetch_receipt_by_id(self, rec_id):
+        cur = self.conn.cursor()
+        cur.execute(
+            "SELECT id, name, phone, address, tc, created_at, is_deleted FROM receipts WHERE id=?",
+            (rec_id,)
+        )
+        return cur.fetchone()
+
+    # Ürün yönetimi metotları (değişiklik yok)
+    def insert_product(self, code, name, price, stock, min_stock, description):
+        cur = self.conn.cursor()
+        cur.execute(
+            "INSERT INTO products (code, name, price, stock_quantity, min_stock, description) VALUES (?, ?, ?, ?, ?, ?)",
+            (code, name, price, stock, min_stock, description))
+        self.conn.commit()
+
+    def update_product(self, prod_id, code, name, price, stock, min_stock, description):
+        cur = self.conn.cursor()
+        cur.execute(
+            "UPDATE products SET code=?, name=?, price=?, stock_quantity=?, min_stock=?, description=? WHERE id=?",
+            (code, name, price, stock, min_stock, description, prod_id))
+        self.conn.commit()
+
+    def delete_product(self, prod_id):
+        cur = self.conn.cursor()
+        cur.execute("DELETE FROM products WHERE id=?", (prod_id,))
+        self.conn.commit()
+
+    def fetch_all_products(self):
+        cur = self.conn.cursor()
+        cur.execute(
+            "SELECT id, code, name, price, stock_quantity, min_stock, description FROM products ORDER BY id DESC")
+        return cur.fetchall()
+
+    def fetch_low_stock_products(self):
+        cur = self.conn.cursor()
+        cur.execute(
+            "SELECT name, stock_quantity, min_stock FROM products WHERE stock_quantity <= min_stock ORDER BY stock_quantity ASC")
+        return cur.fetchall()
+
+    def fetch_product_by_code(self, code):
+        cur = self.conn.cursor()
+        cur.execute("SELECT id, code, name, price, stock_quantity, min_stock, description FROM products WHERE code=?",
+                    (code,))
+        return cur.fetchone()
+
+    def fetch_product_by_id(self, prod_id):
+        cur = self.conn.cursor()
+        cur.execute("SELECT id, code, name, price, stock_quantity, min_stock, description FROM products WHERE id=?",
+                    (prod_id,))
+        return cur.fetchone()
+
+    def fetch_report_data(self, start_date, end_date):
+        cur = self.conn.cursor()
+        start_date_str = start_date.toString("yyyy-MM-dd 00:00:00")
+        end_date_str = end_date.toString("yyyy-MM-dd 23:59:59")
+
+        # Fiş (Satış) Gelirleri
+        cur.execute("""
+            SELECT
+                SUM(ri.quantity * ri.price) AS total_revenue
+            FROM receipt_items ri
+            INNER JOIN receipts r ON ri.receipt_id = r.id
+            WHERE r.is_deleted = 0 AND r.created_at BETWEEN ? AND ?
+        """, (start_date_str, end_date_str))
+        total_receipt_revenue = cur.fetchone()[0] or 0.0
+
+        # Ek Gelirler
+        cur.execute("""
+            SELECT
+                SUM(amount)
+            FROM income_expenses
+            WHERE type='income' AND created_at BETWEEN ? AND ?
+        """, (start_date_str, end_date_str))
+        total_other_income = cur.fetchone()[0] or 0.0
+
+        # Giderler
+        cur.execute("""
+            SELECT
+                SUM(amount)
+            FROM income_expenses
+            WHERE type='expense' AND created_at BETWEEN ? AND ?
+        """, (start_date_str, end_date_str))
+        total_expenses = cur.fetchone()[0] or 0.0
+
+        # Fiş ve Adet Sayıları
+        cur.execute("""
+            SELECT
+                SUM(ri.quantity) AS total_quantity,
+                COUNT(DISTINCT r.id) AS total_receipts
+            FROM receipt_items ri
+            INNER JOIN receipts r ON ri.receipt_id = r.id
+            WHERE r.is_deleted = 0 AND r.created_at BETWEEN ? AND ?
+        """, (start_date_str, end_date_str))
+        receipt_summary = cur.fetchone()
+
+        total_quantity = receipt_summary[0] or 0
+        total_receipts = receipt_summary[1] or 0
+
+        # Ürün Kırılımı
+        cur.execute("""
+            SELECT
+                p.name,
+                p.code,
+                SUM(ri.quantity) AS total_sold_quantity,
+                SUM(ri.quantity * ri.price) AS total_revenue
+            FROM receipt_items ri
+            INNER JOIN receipts r ON ri.receipt_id = r.id
+            INNER JOIN products p ON ri.product_code = p.code
+            WHERE r.is_deleted = 0 AND r.created_at BETWEEN ? AND ?
+            GROUP BY p.code
+            ORDER BY total_revenue DESC
+        """, (start_date_str, end_date_str))
+        product_breakdown = cur.fetchall()
+
+        return {
+            'total_revenue': total_receipt_revenue,
+            'total_other_income': total_other_income,
+            'total_expenses': total_expenses,
+            'total_quantity': total_quantity,
+            'total_receipts': total_receipts,
+            'product_breakdown': product_breakdown
+        }
+
+    def fetch_dashboard_data(self):
+        now = datetime.now()
+        start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        end_of_day = now.replace(hour=23, minute=59, second=59, microsecond=999999)
+        start_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+        cur = self.conn.cursor()
+
+        # Günlük ve aylık fiş gelirleri
+        cur.execute("""
+            SELECT SUM(ri.quantity * ri.price), COUNT(DISTINCT r.id)
+            FROM receipt_items ri
+            JOIN receipts r ON ri.receipt_id = r.id
+            WHERE r.created_at BETWEEN ? AND ? AND r.is_deleted = 0
+        """, (start_of_day.isoformat(), end_of_day.isoformat()))
+        daily_summary = cur.fetchone()
+
+        cur.execute("""
+            SELECT SUM(ri.quantity * ri.price), COUNT(DISTINCT r.id)
+            FROM receipt_items ri
+            JOIN receipts r ON ri.receipt_id = r.id
+            WHERE r.created_at BETWEEN ? AND ? AND r.is_deleted = 0
+        """, (start_of_month.isoformat(), end_of_day.isoformat()))
+        monthly_summary = cur.fetchone()
+
+        # YENİ ÖZELLİK: Günlük ve aylık ek gelir ve giderler
+        cur.execute("""
+            SELECT SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END),
+                   SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END)
+            FROM income_expenses
+            WHERE created_at BETWEEN ? AND ?
+        """, (start_of_day.isoformat(), end_of_day.isoformat()))
+        daily_income_expense = cur.fetchone()
+
+        cur.execute("""
+            SELECT SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END),
+                   SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END)
+            FROM income_expenses
+            WHERE created_at BETWEEN ? AND ?
+        """, (start_of_month.isoformat(), end_of_day.isoformat()))
+        monthly_income_expense = cur.fetchone()
+
+        low_stock_products = self.fetch_low_stock_products()
+
+        cur.execute("SELECT COUNT(id) FROM products")
+        total_products = cur.fetchone()[0]
+
+        cur.execute("SELECT COUNT(DISTINCT name) FROM receipts WHERE is_deleted=0 AND name !=''")
+        total_customers = cur.fetchone()[0]
+
+        return {
+            'daily_receipt_revenue': daily_summary[0] if daily_summary and daily_summary[0] else 0.0,
+            'daily_receipts': daily_summary[1] if daily_summary and daily_summary[1] else 0,
+            'monthly_receipt_revenue': monthly_summary[0] if monthly_summary and monthly_summary[0] else 0.0,
+            'monthly_receipts': monthly_summary[1] if monthly_summary and monthly_summary[1] else 0,
+
+            # YENİ ÖZELLİK: Günlük ve aylık muhasebe verileri
+            'daily_other_income': daily_income_expense[0] if daily_income_expense and daily_income_expense[0] else 0.0,
+            'daily_expenses': daily_income_expense[1] if daily_income_expense and daily_income_expense[1] else 0.0,
+            'monthly_other_income': monthly_income_expense[0] if monthly_income_expense and monthly_income_expense[
+                0] else 0.0,
+            'monthly_expenses': monthly_income_expense[1] if monthly_income_expense and monthly_income_expense[
+                1] else 0.0,
+
+            'low_stock_products': low_stock_products,
+            'total_products': total_products,
+            'total_customers': total_customers,
+        }
+
+    def fetch_recent_activity(self, limit=5):
+        cur = self.conn.cursor()
+        cur.execute("""
+            SELECT r.id, r.name, r.created_at, SUM(ri.quantity * ri.price)
+            FROM receipts r
+            LEFT JOIN receipt_items ri ON r.id = ri.receipt_id
+            WHERE r.is_deleted = 0
+            GROUP BY r.id
+            ORDER BY r.created_at DESC
+            LIMIT ?
+        """, (limit,))
+        return cur.fetchall()
+
+    # YENİ ÖZELLİK: Gelir/gider yönetimi metotları
+    def insert_income_expense(self, type, description, amount):
+        cur = self.conn.cursor()
+        now = datetime.now().isoformat(sep=" ", timespec="seconds")
+        cur.execute(
+            "INSERT INTO income_expenses (type, description, amount, created_at) VALUES (?, ?, ?, ?)",
+            (type, description, amount, now)
+        )
+        self.conn.commit()
+
+    def fetch_all_income_expenses(self, start_date=None, end_date=None):
+        cur = self.conn.cursor()
+        sql_query = "SELECT id, type, description, amount, created_at FROM income_expenses "
+        params = []
+        where_clauses = []
+
+        if start_date and end_date:
+            start_date_str = start_date.toString("yyyy-MM-dd 00:00:00")
+            end_date_str = end_date.toString("yyyy-MM-dd 23:59:59")
+            where_clauses.append("created_at BETWEEN ? AND ?")
+            params.extend([start_date_str, end_date_str])
+
+        if where_clauses:
+            sql_query += " WHERE " + " AND ".join(where_clauses)
+
+        sql_query += " ORDER BY created_at DESC"
+        cur.execute(sql_query, tuple(params))
+        return cur.fetchall()
+
+    def delete_income_expense(self, record_id):
+        cur = self.conn.cursor()
+        cur.execute("DELETE FROM income_expenses WHERE id=?", (record_id,))
+        self.conn.commit()
+
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Özman Dayanıklı Tüketim Malları - Muhasebe v5.0")  # Sürüm güncellendi
+        self.resize(1366, 768)  # Pencere boyutu büyütüldü
+
+        pixmap = QPixmap()
+        pixmap.loadFromData(base64.b64decode(LOGO_BASE64))
+        self.setWindowIcon(QIcon(pixmap))
+        self.db = Database()
+        self.is_dark_theme = False
+        self.setStyleSheet(MODERN_LIGHT_THEME_STYLESHEET)
+        self.is_edit_mode = False
+        self.editing_record_id = None
+        self.current_receipt_items = []
+        self.product_list = []
+        self.receipts_table_data = []
+
+        self._create_header()
+        self.tab_widget = QTabWidget()
+        self.setCentralWidget(self.tab_widget)
+
+        self._create_actions()
+        self._create_toolbar()
+        self._create_statusbar()
+
+        self.setup_dashboard_tab()
+        self.setup_receipt_tab()
+        self.setup_product_tab()
+        self.setup_report_tab()
+        self.setup_archive_tab()
+        self.setup_accounting_tab()  # YENİ ÖZELLİK: Muhasebe Yönetimi sekmesi
+
+        # GELİŞTİRME: Sekmelere ikonlar eklendi
+        self.tab_widget.addTab(self.dashboard_tab, QIcon.fromTheme("go-home"), "Kontrol Paneli")
+        self.tab_widget.addTab(self.receipt_tab, QIcon.fromTheme("document-new"), "Fiş Yönetimi")
+        self.tab_widget.addTab(self.product_tab, QIcon.fromTheme("package-x-generic"), "Ürün Yönetimi")
+        self.tab_widget.addTab(self.accounting_tab, QIcon.fromTheme("x-office-document-template"), "Muhasebe Yönetimi")
+        self.tab_widget.addTab(self.report_tab, QIcon.fromTheme("x-office-document"), "Raporlama")
+        self.tab_widget.addTab(self.archive_tab, QIcon.fromTheme("user-trash"), "Arşiv")
+
+        self.tab_widget.currentChanged.connect(self.on_tab_changed)
+
+        self.load_all_product_data()
+        self.load_receipts_table()
+        self.load_products_table()
+        self.update_receipt_buttons()
+        self.update_dashboard_data()
+        self.load_archive_table()
+        self.load_accounting_table()  # YENİ ÖZELLİK: Muhasebe tablosunu yükle
+
+    def _create_header(self):
+        # Bu fonksiyon, _create_toolbar içerisinde çağrılan bileşenleri içerecek şekilde düzenlendi.
+        # Bu yaklaşım, QMainWindow'un araç çubuğu yapısına daha uygun.
+        pass
+
+    def _create_actions(self):
+        # GELİŞTİRME: Aksiyonlara ikonlar eklendi
+        self.toggle_theme_action = QAction(QIcon.fromTheme("weather-clear-night"), "Koyu/Açık Tema", self)
+        self.toggle_theme_action.triggered.connect(self.toggle_theme)
+
+        self.export_pdf_action = QAction(QIcon.fromTheme("document-save"), "Raporu PDF'e Aktar", self)
+        self.export_pdf_action.triggered.connect(self.export_report_pdf)
+
+        self.export_csv_action = QAction(QIcon.fromTheme("document-save-as"), "Veriyi CSV'e Aktar", self)
+        self.export_csv_action.triggered.connect(self.export_table_to_csv)
+
+        self.print_receipt_action = QAction(QIcon.fromTheme("document-print"), "Fişi Yazdır", self)
+        self.print_receipt_action.triggered.connect(self.print_receipt)
+
+        self.about_action = QAction(QIcon.fromTheme("help-about"), "Hakkında", self)
+        self.about_action.triggered.connect(self.show_about_dialog)
+
+        self.exit_action = QAction(QIcon.fromTheme("application-exit"), "Çıkış", self)
+        self.exit_action.triggered.connect(self.close)
+
+    def _create_toolbar(self):
+        self.toolbar = QToolBar("Ana Araç Çubuğu")
+        self.addToolBar(Qt.TopToolBarArea, self.toolbar)
+
+        # Logo ve başlık
+        logo_pixmap = QPixmap()
+        logo_pixmap.loadFromData(base64.b64decode(LOGO_BASE64))
+        logo_label = QLabel()
+        logo_label.setPixmap(logo_pixmap.scaled(32, 32, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+
+        title_label = QLabel("Özman Dayanıklı Tüketim Malları")
+        title_label.setStyleSheet("font-size: 16pt; font-weight: 700;")
+
+        self.toolbar.addWidget(logo_label)
+        self.toolbar.addWidget(title_label)
+        self.toolbar.addSeparator()
+
+        # Araç çubuğu eylemleri
+        self.toolbar.addAction(self.toggle_theme_action)
+        self.toolbar.addAction(self.export_pdf_action)
+        self.toolbar.addAction(self.export_csv_action)
+        self.toolbar.addAction(self.print_receipt_action)
+        self.toolbar.addSeparator()
+        self.toolbar.addAction(self.about_action)
+        self.toolbar.addAction(self.exit_action)
+        self.toolbar.addSeparator()
+
+    def _create_statusbar(self):
+        self.statusBar = self.statusBar()
+        self.statusBar.showMessage("Uygulama hazır.")
+
+    def on_tab_changed(self, index):
+        # Her sekme değiştiğinde ilgili tablonun yeniden yüklenmesini sağlar.
+        if index == 0:  # Kontrol Paneli
+            self.update_dashboard_data()
+        elif index == 1:  # Fiş Yönetimi
+            self.load_receipts_table()
+        elif index == 2:  # Ürün Yönetimi
+            self.load_products_table()
+        elif index == 3:  # Muhasebe Yönetimi
+            self.load_accounting_table()
+        elif index == 4:  # Raporlama
+            self.update_report_data()
+        elif index == 5:  # Arşiv
+            self.load_archive_table()
+
+    def toggle_theme(self):
+        self.is_dark_theme = not self.is_dark_theme
+        if self.is_dark_theme:
+            self.setStyleSheet(MODERN_DARK_THEME_STYLESHEET)
+            self.toggle_theme_action.setIcon(QIcon.fromTheme("weather-clear"))
+        else:
+            self.setStyleSheet(MODERN_LIGHT_THEME_STYLESHEET)
+            self.toggle_theme_action.setIcon(QIcon.fromTheme("weather-clear-night"))
+
+    def show_about_dialog(self):
+        about_dialog = AboutDialog(self)
+        about_dialog.exec()
+
+    def export_report_pdf(self):
+        printer = QPrinter(QPrinter.HighResolution)
+        print_dialog = QPrintDialog(printer, self)
+        if print_dialog.exec() == QDialog.Accepted:
+            document = QTextDocument()
+            html_content = self.generate_report_html()
+            document.setHtml(html_content)
+            document.print(printer)
+
+    def generate_report_html(self):
+        # Raporlama sekmesindeki verileri HTML formatına dönüştürür.
+        report_data = self.db.fetch_report_data(self.report_start_date.date(), self.report_end_date.date())
+        total_revenue = report_data['total_revenue']
+        total_other_income = report_data['total_other_income']
+        total_expenses = report_data['total_expenses']
+        net_profit = (total_revenue + total_other_income) - total_expenses
+
+        products_html = ""
+        for name, code, sold_quantity, revenue in report_data['product_breakdown']:
+            products_html += f"<tr><td>{name}</td><td>{code}</td><td>{sold_quantity}</td><td>{revenue:.2f} ₺</td></tr>"
+
+        html = f"""
+        <html>
+        <head>
+        <style>
+            body {{ font-family: 'Segoe UI', Arial, sans-serif; margin: 20px; }}
+            h1, h2 {{ color: #1f2937; }}
+            table {{ width: 100%; border-collapse: collapse; margin-top: 20px; }}
+            th, td {{ border: 1px solid #e2e8f0; padding: 10px; text-align: left; }}
+            th {{ background-color: #f0f4f8; font-weight: bold; }}
+            .summary-card {{ background-color: #f9fafb; padding: 15px; border-radius: 8px; margin-bottom: 10px; }}
+        </style>
+        </head>
+        <body>
+            <h1>Özman Dayanıklı Tüketim Malları - Rapor</h1>
+            <p><strong>Tarih Aralığı:</strong> {self.report_start_date.date().toString('dd.MM.yyyy')} - {self.report_end_date.date().toString('dd.MM.yyyy')}</p>
+            <hr/>
+            <h2>Finansal Özet</h2>
+            <div class="summary-card">
+                <p><strong>Toplam Fiş Geliri:</strong> {total_revenue:.2f} ₺</p>
+                <p><strong>Diğer Gelirler:</strong> {total_other_income:.2f} ₺</p>
+                <p><strong>Toplam Giderler:</strong> {total_expenses:.2f} ₺</p>
+                <p><strong>NET KAR/ZARAR:</strong> {net_profit:.2f} ₺</p>
+            </div>
+            <hr/>
+            <h2>Satılan Ürün Kırılımı</h2>
+            <table>
+                <thead>
+                    <tr><th>Ürün Adı</th><th>Ürün Kodu</th><th>Adet</th><th>Toplam Gelir</th></tr>
+                </thead>
+                <tbody>
+                    {products_html}
+                </tbody>
+            </table>
+        </body>
+        </html>
+        """
+        return html
+
+    def export_table_to_csv(self):
+        current_tab_index = self.tab_widget.currentIndex()
+        if current_tab_index == 1:  # Fiş Yönetimi
+            table_widget = self.receipts_table
+            filename = "fiş_listesi"
+        elif current_tab_index == 2:  # Ürün Yönetimi
+            table_widget = self.products_table
+            filename = "ürün_listesi"
+        elif current_tab_index == 3:  # Muhasebe Yönetimi
+            table_widget = self.accounting_table
+            filename = "muhasebe_kayıtları"
+        elif current_tab_index == 4:  # Raporlama
+            table_widget = self.report_product_table
+            filename = "rapor_urun_kirilimi"
+        elif current_tab_index == 5:  # Arşiv
+            table_widget = self.archive_table
+            filename = "arşiv_listesi"
+        else:
+            QMessageBox.warning(self, "Uyarı", "Bu sekmedeki veriler CSV'ye aktarılamaz.")
+            return
+
+        file_dialog = QFileDialog(self)
+        file_path, _ = file_dialog.getSaveFileName(self, "CSV Olarak Kaydet",
+                                                   f"{filename}_{datetime.now().strftime('%Y%m%d')}.csv",
+                                                   "CSV Dosyaları (*.csv)")
+
+        if file_path:
+            with open(file_path, 'w', newline='', encoding='utf-8') as file:
+                writer = csv.writer(file)
+
+                # Başlıkları yaz
+                headers = [table_widget.horizontalHeaderItem(i).text() for i in range(table_widget.columnCount())]
+                writer.writerow(headers)
+
+                # Veriyi yaz
+                for row in range(table_widget.rowCount()):
+                    row_data = []
+                    for col in range(table_widget.columnCount()):
+                        item = table_widget.item(row, col)
+                        if item:
+                            row_data.append(item.text())
+                        else:
+                            row_data.append('')
+                    writer.writerow(row_data)
+
+            QMessageBox.information(self, "Başarılı", f"Veriler başarıyla '{file_path}' dosyasına aktarıldı.")
+
+    # ================== SEKMELERİN TANIMLANDIĞI KISIM ==================
+
+    def setup_dashboard_tab(self):
+        self.dashboard_tab = QWidget()
+        main_layout = QVBoxLayout(self.dashboard_tab)
+
+        # Dashboard Kartları
+        dashboard_cards_layout = QHBoxLayout()
+        self.dashboard_cards = {
+            'daily_revenue': self._create_dashboard_card("Bugün Fiş Geliri", "0.00 ₺"),
+            'daily_expenses': self._create_dashboard_card("Bugün Giderler", "0.00 ₺"),
+            'daily_net': self._create_dashboard_card("Bugün Kar/Zarar", "0.00 ₺"),
+            'monthly_revenue': self._create_dashboard_card("Bu Ay Fiş Geliri", "0.00 ₺"),
+            'monthly_expenses': self._create_dashboard_card("Bu Ay Giderler", "0.00 ₺"),
+            'monthly_net': self._create_dashboard_card("Bu Ay Kar/Zarar", "0.00 ₺")
+        }
+        for card in self.dashboard_cards.values():
+            dashboard_cards_layout.addWidget(card)
+
+        main_layout.addLayout(dashboard_cards_layout)
+
+        bottom_layout = QHBoxLayout()
+
+        # Düşük Stoklu Ürünler
+        low_stock_group = QGroupBox("Düşük Stoklu Ürünler")
+        low_stock_layout = QVBoxLayout(low_stock_group)
+        self.low_stock_table = QTableWidget()
+        self.low_stock_table.setColumnCount(3)
+        self.low_stock_table.setHorizontalHeaderLabels(["Ürün Adı", "Mevcut Stok", "Min. Stok"])
+        self.low_stock_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.low_stock_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.low_stock_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        low_stock_layout.addWidget(self.low_stock_table)
+
+        # Son Fişler
+        recent_receipts_group = QGroupBox("Son 5 Fiş")
+        recent_receipts_layout = QVBoxLayout(recent_receipts_group)
+        self.recent_receipts_table = QTableWidget()
+        self.recent_receipts_table.setColumnCount(4)
+        self.recent_receipts_table.setHorizontalHeaderLabels(["Fiş No", "Müşteri", "Tarih", "Tutar"])
+        self.recent_receipts_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.recent_receipts_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.recent_receipts_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        recent_receipts_layout.addWidget(self.recent_receipts_table)
+
+        bottom_layout.addWidget(low_stock_group)
+        bottom_layout.addWidget(recent_receipts_group)
+
+        main_layout.addLayout(bottom_layout)
+        main_layout.addStretch()
+
+    def _create_dashboard_card(self, label, value):
+        card = QGroupBox()
+        card_layout = QVBoxLayout(card)
+        label_widget = QLabel(label)
+        label_widget.setObjectName("dashboardCardLabel")
+        value_widget = QLabel(value)
+        value_widget.setObjectName("dashboardCardValue")
+        card_layout.addWidget(label_widget)
+        card_layout.addWidget(value_widget)
+        return card
+
+    def update_dashboard_data(self):
+        data = self.db.fetch_dashboard_data()
+
+        # Fiş satışlarından gelen gelirler
+        daily_receipt_revenue = data['daily_receipt_revenue']
+        monthly_receipt_revenue = data['monthly_receipt_revenue']
+
+        # Diğer gelirler ve giderler
+        daily_other_income = data['daily_other_income']
+        daily_expenses = data['daily_expenses']
+        monthly_other_income = data['monthly_other_income']
+        monthly_expenses = data['monthly_expenses']
+
+        # Toplam günlük ve aylık değerler
+        daily_total_income = daily_receipt_revenue + daily_other_income
+        monthly_total_income = monthly_receipt_revenue + monthly_other_income
+        daily_net = daily_total_income - daily_expenses
+        monthly_net = monthly_total_income - monthly_expenses
+
+        # Kartları güncelle
+        self.dashboard_cards['daily_revenue'].findChild(QLabel, 'dashboardCardValue').setText(
+            f"{daily_receipt_revenue:,.2f} ₺")
+        self.dashboard_cards['daily_expenses'].findChild(QLabel, 'dashboardCardValue').setText(
+            f"{daily_expenses:,.2f} ₺")
+        self.dashboard_cards['daily_net'].findChild(QLabel, 'dashboardCardValue').setText(f"{daily_net:,.2f} ₺")
+        self.dashboard_cards['monthly_revenue'].findChild(QLabel, 'dashboardCardValue').setText(
+            f"{monthly_receipt_revenue:,.2f} ₺")
+        self.dashboard_cards['monthly_expenses'].findChild(QLabel, 'dashboardCardValue').setText(
+            f"{monthly_expenses:,.2f} ₺")
+        self.dashboard_cards['monthly_net'].findChild(QLabel, 'dashboardCardValue').setText(f"{monthly_net:,.2f} ₺")
+
+        # Düşük Stok tablosunu güncelle
+        self.low_stock_table.setRowCount(0)
+        low_stock_data = data['low_stock_products']
+        self.low_stock_table.setRowCount(len(low_stock_data))
+        for row_num, row_data in enumerate(low_stock_data):
+            self.low_stock_table.setItem(row_num, 0, QTableWidgetItem(str(row_data[0])))
+            self.low_stock_table.setItem(row_num, 1, QTableWidgetItem(str(row_data[1])))
+            self.low_stock_table.setItem(row_num, 2, QTableWidgetItem(str(row_data[2])))
+
+        # Son Fişler tablosunu güncelle
+        self.recent_receipts_table.setRowCount(0)
+        recent_receipts_data = self.db.fetch_recent_activity()
+        self.recent_receipts_table.setRowCount(len(recent_receipts_data))
+        for row_num, row_data in enumerate(recent_receipts_data):
+            receipt_id, customer_name, created_at, total_amount = row_data
+            self.recent_receipts_table.setItem(row_num, 0, QTableWidgetItem(str(receipt_id)))
+            self.recent_receipts_table.setItem(row_num, 1, QTableWidgetItem(str(customer_name)))
+            self.recent_receipts_table.setItem(row_num, 2, QTableWidgetItem(created_at.split(' ')[0]))
+            self.recent_receipts_table.setItem(row_num, 3, QTableWidgetItem(f"{total_amount or 0:.2f} ₺"))
+
+    def setup_receipt_tab(self):
+        self.receipt_tab = QWidget()
+        main_layout = QHBoxLayout(self.receipt_tab)
+
+        # Fiş Giriş Formu
+        receipt_form_group = QGroupBox("Fiş Detayları")
+        receipt_form_layout = QVBoxLayout(receipt_form_group)
+        form_layout = QFormLayout()
+
+        self.customer_name_input = QLineEdit()
+        self.customer_phone_input = QLineEdit()
+        self.customer_address_input = QTextEdit()
+        self.customer_address_input.setMinimumHeight(50)
+        self.customer_tc_input = QLineEdit()
+
+        form_layout.addRow("Müşteri Adı:", self.customer_name_input)
+        form_layout.addRow("Telefon:", self.customer_phone_input)
+        form_layout.addRow("Adres:", self.customer_address_input)
+        form_layout.addRow("TC Kimlik No:", self.customer_tc_input)
+        receipt_form_layout.addLayout(form_layout)
+
+        # Ürün Ekleme Kısmı
+        product_add_group = QGroupBox("Ürün Ekle")
+        product_add_layout = QVBoxLayout(product_add_group)
+        product_add_form_layout = QFormLayout()
+
+        self.product_code_input = QLineEdit()
+        self.product_name_input = QLineEdit()
+        self.product_quantity_input = QSpinBox()
+        self.product_quantity_input.setMinimum(1)
+        self.product_price_input = QLineEdit()
+
+        self.product_name_completer = QCompleter(self)
+        self.product_name_completer.setCaseSensitivity(Qt.CaseInsensitive)
+        self.product_name_completer.activated.connect(self.fill_product_details)
+        self.product_name_input.setCompleter(self.product_name_completer)
+
+        product_add_form_layout.addRow("Ürün Kodu:", self.product_code_input)
+        product_add_form_layout.addRow("Ürün Adı:", self.product_name_input)
+        product_add_form_layout.addRow("Adet:", self.product_quantity_input)
+        product_add_form_layout.addRow("Birim Fiyat:", self.product_price_input)
+
+        product_add_layout.addLayout(product_add_form_layout)
+
+        add_product_button = QPushButton("Ürünü Ekle")
+        add_product_button.clicked.connect(self.add_product_to_receipt)
+        product_add_layout.addWidget(add_product_button)
+
+        receipt_form_layout.addWidget(product_add_group)
+
+        # Fiş Kalemleri Tablosu
+        receipt_items_table_group = QGroupBox("Fiş Kalemleri")
+        receipt_items_layout = QVBoxLayout(receipt_items_table_group)
+        self.receipt_items_table = QTableWidget()
+        self.receipt_items_table.setColumnCount(4)
+        self.receipt_items_table.setHorizontalHeaderLabels(["ID", "Ürün Adı", "Adet", "Fiyat"])
+        self.receipt_items_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.receipt_items_table.setColumnHidden(0, True)
+        receipt_items_layout.addWidget(self.receipt_items_table)
+
+        total_price_layout = QHBoxLayout()
+        self.total_price_label = QLabel("Toplam Fiyat: <b>0.00 ₺</b>")
+        self.total_price_label.setStyleSheet("font-size: 14pt; font-weight: 600;")
+        delete_item_button = QPushButton("Seçili Ürünü Çıkar")
+        delete_item_button.clicked.connect(self.remove_product_from_receipt)
+        delete_item_button.setProperty("danger", True)
+        total_price_layout.addWidget(self.total_price_label)
+        total_price_layout.addStretch()
+        total_price_layout.addWidget(delete_item_button)
+
+        receipt_items_layout.addLayout(total_price_layout)
+        receipt_form_layout.addWidget(receipt_items_table_group)
+
+        # Fiş Kaydetme/Güncelleme Butonları
+        receipt_buttons_layout = QHBoxLayout()
+        self.save_receipt_button = QPushButton("Fişi Kaydet")
+        self.save_receipt_button.clicked.connect(self.save_receipt)
+        self.new_receipt_button = QPushButton("Yeni Fiş")
+        self.new_receipt_button.setProperty("accent", "neutral")
+        self.new_receipt_button.clicked.connect(self.clear_receipt_form)
+
+        receipt_buttons_layout.addWidget(self.save_receipt_button)
+        receipt_buttons_layout.addWidget(self.new_receipt_button)
+
+        receipt_form_layout.addLayout(receipt_buttons_layout)
+
+        # Fiş Arama ve Listeleme
+        receipt_list_group = QGroupBox("Fişler")
+        receipt_list_layout = QVBoxLayout(receipt_list_group)
+
+        search_layout = QHBoxLayout()
+        self.receipt_search_input = QLineEdit()
+        self.receipt_search_input.setPlaceholderText("Müşteri adı, telefon veya TC ile ara...")
+        self.receipt_search_input.returnPressed.connect(self.load_receipts_table)
+
+        date_filter_layout = QHBoxLayout()
+        date_filter_layout.addWidget(QLabel("Başlangıç Tarihi:"))
+        self.receipt_start_date = QDateEdit()
+        self.receipt_start_date.setCalendarPopup(True)
+        self.receipt_start_date.setDate(QDate.currentDate().addDays(-30))
+        date_filter_layout.addWidget(self.receipt_start_date)
+        date_filter_layout.addWidget(QLabel("Bitiş Tarihi:"))
+        self.receipt_end_date = QDateEdit()
+        self.receipt_end_date.setCalendarPopup(True)
+        self.receipt_end_date.setDate(QDate.currentDate())
+        date_filter_layout.addWidget(self.receipt_end_date)
+
+        self.receipt_search_button = QPushButton("Ara")
+        self.receipt_search_button.clicked.connect(self.load_receipts_table)
+        self.receipt_reset_button = QPushButton("Sıfırla")
+        self.receipt_reset_button.clicked.connect(self.reset_receipt_filters)
+
+        search_layout.addWidget(self.receipt_search_input)
+        search_layout.addWidget(self.receipt_search_button)
+        search_layout.addWidget(self.receipt_reset_button)
+
+        receipt_list_layout.addLayout(search_layout)
+        receipt_list_layout.addLayout(date_filter_layout)
+
+        self.receipts_table = QTableWidget()
+        self.receipts_table.setColumnCount(6)
+        self.receipts_table.setHorizontalHeaderLabels(
+            ["ID", "Müşteri Adı", "Telefon", "Tarih", "Toplam Tutar", "İşlemler"])
+        self.receipts_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.receipts_table.setColumnHidden(0, True)
+        self.receipts_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.receipts_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        receipt_list_layout.addWidget(self.receipts_table)
+        self.receipts_table.cellClicked.connect(self.handle_receipts_table_click)
+
+        main_layout.addWidget(receipt_form_group, 1)
+        main_layout.addWidget(receipt_list_group, 2)
+
+    def load_all_product_data(self):
+        self.product_list = self.db.fetch_all_products()
+        product_names = [p[2] for p in self.product_list]
+        self.product_name_completer.setModel(QStringListModel(product_names))
+
+    def fill_product_details(self, text):
+        for product in self.product_list:
+            if product[2] == text:
+                self.product_code_input.setText(product[1])
+                self.product_price_input.setText(str(product[3]))
+                self.product_quantity_input.setFocus()
+                return
+
+    def add_product_to_receipt(self):
+        product_code = self.product_code_input.text().strip()
+        product_name = self.product_name_input.text().strip()
+        quantity = self.product_quantity_input.value()
+        price = self.product_price_input.text().strip()
+
+        if not product_code or not product_name or not price:
+            QMessageBox.warning(self, "Hata", "Ürün kodu, adı ve fiyatı boş bırakılamaz.")
+            return
+
+        try:
+            price = Decimal(price.replace(',', '.')).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+
+            # Ürün kodu zaten tabloda varsa uyarı ver
+            for row in range(self.receipt_items_table.rowCount()):
+                if self.receipt_items_table.item(row, 0).text() == product_code:
+                    QMessageBox.warning(self, "Hata", "Bu ürün zaten fiş listesinde.")
+                    return
+
+            # Stok kontrolü
+            product_data = self.db.fetch_product_by_code(product_code)
+            if product_data:
+                available_stock = product_data[4]
+                if quantity > available_stock:
+                    QMessageBox.warning(self, "Hata", f"Yeterli stok yok. Mevcut stok: {available_stock}")
+                    return
+
+            # Tabloya ekle
+            row_count = self.receipt_items_table.rowCount()
+            self.receipt_items_table.setRowCount(row_count + 1)
+
+            item_id = ""  # Yeni kayıt olduğu için ID boş
+            self.receipt_items_table.setItem(row_count, 0, QTableWidgetItem(str(item_id)))
+            self.receipt_items_table.setItem(row_count, 1, QTableWidgetItem(product_name))
+            self.receipt_items_table.setItem(row_count, 2, QTableWidgetItem(str(quantity)))
+            self.receipt_items_table.setItem(row_count, 3, QTableWidgetItem(f"{price:.2f} ₺"))
+
+            # Clear inputs
+            self.product_code_input.clear()
+            self.product_name_input.clear()
+            self.product_quantity_input.setValue(1)
+            self.product_price_input.clear()
+
+            self.update_total_price()
+
+        except ValueError:
+            QMessageBox.warning(self, "Hata", "Lütfen geçerli bir fiyat girin.")
+
+    def remove_product_from_receipt(self):
+        selected_rows = self.receipt_items_table.selectionModel().selectedRows()
+        if not selected_rows:
+            QMessageBox.warning(self, "Hata", "Lütfen silinecek bir ürün seçin.")
+            return
+
+        row_index = selected_rows[0].row()
+        item_id = self.receipt_items_table.item(row_index, 0).text()
+
+        if item_id:  # Kayıtlı bir fişten ürün siliniyor
+            reply = QMessageBox.question(self, "Onay",
+                                         "Bu ürünü fişten kaldırmak istediğinizden emin misiniz? Stok miktarı güncellenecektir.",
+                                         QMessageBox.Yes | QMessageBox.No)
+            if reply == QMessageBox.Yes:
+                self.db.remove_receipt_item(int(item_id))
+                self.receipt_items_table.removeRow(row_index)
+                self.update_total_price()
+        else:  # Yeni bir fişteki ürünü silme
+            self.receipt_items_table.removeRow(row_index)
+            self.update_total_price()
+
+    def update_total_price(self):
+        total = Decimal('0.00')
+        for row in range(self.receipt_items_table.rowCount()):
+            quantity = self.receipt_items_table.item(row, 2).text()
+            price = self.receipt_items_table.item(row, 3).text().replace(' ₺', '').replace(',', '.')
+            if quantity and price:
+                total += Decimal(quantity) * Decimal(price)
+        self.total_price_label.setText(f"Toplam Fiyat: <b>{total:,.2f} ₺</b>")
+
+    def save_receipt(self):
+        customer_name = self.customer_name_input.text().strip()
+        customer_phone = self.customer_phone_input.text().strip()
+        customer_address = self.customer_address_input.toPlainText().strip()
+        customer_tc = self.customer_tc_input.text().strip()
+
+        if not customer_name:
+            QMessageBox.warning(self, "Hata", "Müşteri adı boş bırakılamaz.")
+            return
+
+        if self.receipt_items_table.rowCount() == 0:
+            QMessageBox.warning(self, "Hata", "Fişe en az bir ürün eklemelisiniz.")
+            return
+
+        if self.is_edit_mode:
+            # Önce eski fiş kalemlerini stoklara geri ekle
+            old_items = self.db.fetch_receipt_items(self.editing_record_id)
+            self.db.update_receipt(self.editing_record_id, customer_name, customer_phone, customer_address, customer_tc,
+                                   old_items)
+
+            # Sonra yeni fiş kalemlerini ekle
+            for row in range(self.receipt_items_table.rowCount()):
+                product_code = self.receipt_items_table.item(row,
+                                                             0).text()  # Normalde bu tablo item'de product code yok, sadece isim var.
+                # Bu kısım hatalı çalışır, ancak ürün listesi ve fiş listesi doğru şekilde
+                # eşleştirilebilirse düzeltilebilir. Burayı şimdilik ürün ismini kullanarak
+                # kodunu bulacak şekilde ayarlayacağım.
+                product_name = self.receipt_items_table.item(row, 1).text()
+                quantity = int(self.receipt_items_table.item(row, 2).text())
+                price = Decimal(self.receipt_items_table.item(row, 3).text().replace(' ₺', '').replace(',', '.'))
+
+                # Product Code'u bul
+                prod_code_from_name = next((p[1] for p in self.product_list if p[2] == product_name), None)
+
+                if prod_code_from_name:
+                    self.db.insert_receipt_item(self.editing_record_id, prod_code_from_name, quantity, float(price))
+                else:
+                    QMessageBox.warning(self, "Hata", f"'{product_name}' isimli ürün bulunamadı. Fiş güncellenemedi.")
+                    return
+
+            QMessageBox.information(self, "Başarılı", "Fiş başarıyla güncellendi.")
+            self.is_edit_mode = False
+            self.editing_record_id = None
+        else:
+            receipt_id = self.db.insert_receipt(customer_name, customer_phone, customer_address, customer_tc)
+
+            for row in range(self.receipt_items_table.rowCount()):
+                product_name = self.receipt_items_table.item(row, 1).text()
+                quantity = int(self.receipt_items_table.item(row, 2).text())
+                price = Decimal(self.receipt_items_table.item(row, 3).text().replace(' ₺', '').replace(',', '.'))
+
+                prod_code_from_name = next((p[1] for p in self.product_list if p[2] == product_name), None)
+
+                if prod_code_from_name:
+                    self.db.insert_receipt_item(receipt_id, prod_code_from_name, quantity, float(price))
+                else:
+                    QMessageBox.warning(self, "Hata", f"'{product_name}' isimli ürün bulunamadı. Fiş kaydedilemedi.")
+                    return
+
+            QMessageBox.information(self, "Başarılı", "Yeni fiş başarıyla kaydedildi.")
+
+        self.clear_receipt_form()
+        self.load_receipts_table()
+        self.update_dashboard_data()
+
+    def clear_receipt_form(self):
+        self.customer_name_input.clear()
+        self.customer_phone_input.clear()
+        self.customer_address_input.clear()
+        self.customer_tc_input.clear()
+        self.receipt_items_table.setRowCount(0)
+        self.total_price_label.setText("Toplam Fiyat: <b>0.00 ₺</b>")
+        self.is_edit_mode = False
+        self.editing_record_id = None
+        self.save_receipt_button.setText("Fişi Kaydet")
+
+    def load_receipts_table(self, only_deleted=False):
+        self.receipts_table.setRowCount(0)
+        search_term = self.receipt_search_input.text() if hasattr(self, 'receipt_search_input') else ""
+        start_date = self.receipt_start_date.date() if hasattr(self, 'receipt_start_date') else None
+        end_date = self.receipt_end_date.date() if hasattr(self, 'receipt_end_date') else None
+
+        self.receipts_table_data = self.db.fetch_all_receipts(only_deleted, search_term, start_date, end_date)
+        self.receipts_table.setRowCount(len(self.receipts_table_data))
+
+        for row_num, row_data in enumerate(self.receipts_table_data):
+            rec_id, name, phone, address, tc, created_at, is_deleted = row_data
+
+            # Toplam tutarı hesapla
+            items = self.db.fetch_receipt_items(rec_id)
+            total_amount = sum(item[2] * item[3] for item in items)
+
+            self.receipts_table.setItem(row_num, 0, QTableWidgetItem(str(rec_id)))
+            self.receipts_table.setItem(row_num, 1, QTableWidgetItem(name))
+            self.receipts_table.setItem(row_num, 2, QTableWidgetItem(phone))
+            self.receipts_table.setItem(row_num, 3, QTableWidgetItem(created_at.split(' ')[0]))
+            self.receipts_table.setItem(row_num, 4, QTableWidgetItem(f"{total_amount:,.2f} ₺"))
+
+            # İşlem butonları
+            actions_widget = QWidget()
+            actions_layout = QHBoxLayout(actions_widget)
+            actions_layout.setContentsMargins(0, 0, 0, 0)
+            actions_layout.setAlignment(Qt.AlignCenter)
+
+            if only_deleted:
+                restore_button = QPushButton("Geri Al")
+                restore_button.clicked.connect(lambda _, r=rec_id: self.restore_receipt_record(r))
+                delete_button = QPushButton("Kalıcı Sil")
+                delete_button.clicked.connect(lambda _, r=rec_id: self.hard_delete_receipt_record(r))
+                delete_button.setProperty("danger", True)
+                actions_layout.addWidget(restore_button)
+                actions_layout.addWidget(delete_button)
+            else:
+                edit_button = QPushButton("Düzenle")
+                edit_button.clicked.connect(lambda _, r=rec_id: self.edit_receipt_record(r))
+                delete_button = QPushButton("Sil")
+                delete_button.clicked.connect(lambda _, r=rec_id: self.soft_delete_receipt_record(r))
+                delete_button.setProperty("danger", True)
+
+                print_button = QPushButton("Yazdır")
+                print_button.clicked.connect(lambda _, r=rec_id: self.print_receipt(r))
+
+                actions_layout.addWidget(edit_button)
+                actions_layout.addWidget(delete_button)
+                actions_layout.addWidget(print_button)
+
+            self.receipts_table.setCellWidget(row_num, 5, actions_widget)
+
+        self.receipts_table.resizeColumnsToContents()
+        self.receipts_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+
+    def reset_receipt_filters(self):
+        self.receipt_search_input.clear()
+        self.receipt_start_date.setDate(QDate.currentDate().addDays(-30))
+        self.receipt_end_date.setDate(QDate.currentDate())
+        self.load_receipts_table()
+
+    def handle_receipts_table_click(self, row, column):
+        if column == 5:  # "İşlemler" sütunu
+            return  # Butonun kendi sinyali var, burada bir şey yapmaya gerek yok
+        rec_id = int(self.receipts_table.item(row, 0).text())
+        self.edit_receipt_record(rec_id)
+
+    def edit_receipt_record(self, rec_id):
+        self.is_edit_mode = True
+        self.editing_record_id = rec_id
+        self.save_receipt_button.setText("Fişi Güncelle")
+
+        # Fiş bilgilerini yükle
+        receipt = self.db.fetch_receipt_by_id(rec_id)
+        if receipt:
+            self.customer_name_input.setText(receipt[1])
+            self.customer_phone_input.setText(receipt[2])
+            self.customer_address_input.setText(receipt[3])
+            self.customer_tc_input.setText(receipt[4])
+
+        # Fiş kalemlerini yükle
+        self.receipt_items_table.setRowCount(0)
+        items = self.db.fetch_receipt_items(rec_id)
+        self.receipt_items_table.setRowCount(len(items))
+        for row_num, item in enumerate(items):
+            item_id, product_name, quantity, price, product_code = item
+            self.receipt_items_table.setItem(row_num, 0, QTableWidgetItem(str(item_id)))
+            self.receipt_items_table.setItem(row_num, 1, QTableWidgetItem(product_name))
+            self.receipt_items_table.setItem(row_num, 2, QTableWidgetItem(str(quantity)))
+            self.receipt_items_table.setItem(row_num, 3, QTableWidgetItem(f"{price:.2f} ₺"))
+
+        self.update_total_price()
+        self.tab_widget.setCurrentIndex(1)
+
+    def soft_delete_receipt_record(self, rec_id):
+        reply = QMessageBox.question(self, "Onay",
+                                     "Bu fişi silmek istediğinizden emin misiniz? Fiş arşive taşınacaktır.",
+                                     QMessageBox.Yes | QMessageBox.No)
+        if reply == QMessageBox.Yes:
+            self.db.soft_delete_receipt(rec_id)
+            self.load_receipts_table()
+            self.update_dashboard_data()
+            self.load_archive_table()
+            QMessageBox.information(self, "Başarılı", "Fiş başarıyla arşive taşındı.")
+
+    def restore_receipt_record(self, rec_id):
+        reply = QMessageBox.question(self, "Onay",
+                                     "Bu fişi geri almak istediğinizden emin misiniz? Ürün stokları güncellenecektir.",
+                                     QMessageBox.Yes | QMessageBox.No)
+        if reply == QMessageBox.Yes:
+            self.db.restore_receipt(rec_id)
+            self.load_archive_table()
+            self.update_dashboard_data()
+            self.load_receipts_table()
+            QMessageBox.information(self, "Başarılı", "Fiş başarıyla geri alındı.")
+
+    def hard_delete_receipt_record(self, rec_id):
+        reply = QMessageBox.question(self, "Uyarı",
+                                     "Bu fişi kalıcı olarak silmek istediğinizden emin misiniz? Bu işlem geri alınamaz!",
+                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if reply == QMessageBox.Yes:
+            self.db.hard_delete_receipt(rec_id)
+            self.load_archive_table()
+            self.update_dashboard_data()
+            QMessageBox.information(self, "Başarılı", "Fiş kalıcı olarak silindi.")
+
+    def print_receipt(self, rec_id=None):
+        if not rec_id:
+            if self.is_edit_mode:
+                rec_id = self.editing_record_id
+            else:
+                QMessageBox.warning(self, "Hata", "Lütfen yazdırmak için bir fiş seçin veya düzenleme modunda olun.")
+                return
+
+        receipt_data = self.db.fetch_receipt_by_id(rec_id)
+        if not receipt_data:
+            QMessageBox.warning(self, "Hata", "Fiş bilgisi bulunamadı.")
+            return
+
+        receipt_items = self.db.fetch_receipt_items(rec_id)
+
+        # HTML İçeriği oluşturma
+        html_content = self.generate_receipt_html(receipt_data, receipt_items)
+
+        document = QTextDocument()
+        document.setHtml(html_content)
+
+        printer = QPrinter(QPrinter.HighResolution)
+        print_dialog = QPrintDialog(printer, self)
+
+        if print_dialog.exec() == QDialog.Accepted:
+            document.print(printer)
+
+    def generate_receipt_html(self, receipt_data, receipt_items):
+        receipt_id, name, phone, address, tc, created_at, _ = receipt_data
+
+        items_html = ""
+        total_price = Decimal('0.00')
+        for _, item_name, quantity, price, _ in receipt_items:
+            subtotal = Decimal(quantity) * Decimal(price)
+            total_price += subtotal
+            items_html += f"""
+                <tr>
+                    <td>{item_name}</td>
+                    <td style="text-align: right;">{quantity}</td>
+                    <td style="text-align: right;">{price:.2f} ₺</td>
+                    <td style="text-align: right;">{subtotal:.2f} ₺</td>
+                </tr>
+            """
+
+        html = f"""
+        <html>
+        <head>
+        <style>
+            body {{ font-family: 'Segoe UI', Arial, sans-serif; font-size: 10pt; line-height: 1.6; margin: 20px; }}
+            .receipt-container {{ width: 280px; margin: auto; border: 1px dashed #000; padding: 10px; }}
+            .header, .footer {{ text-align: center; }}
+            .details {{ margin-top: 10px; }}
+            .items-table {{ width: 100%; border-collapse: collapse; margin-top: 10px; }}
+            .items-table th, .items-table td {{ padding: 5px; border-bottom: 1px dashed #ccc; }}
+            .total {{ text-align: right; margin-top: 10px; font-size: 12pt; font-weight: bold; }}
+            hr {{ border: none; border-top: 1px dashed #ccc; }}
+        </style>
+        </head>
+        <body>
+            <div class="receipt-container">
+                <div class="header">
+                    <h2>Özman Dayanıklı Tüketim</h2>
+                    <p>Adres: Cumhuriyet Caddesi No:1, Merkez<br/>Telefon: 05xx xxx xx xx</p>
+                    <p><strong>Fiş No: {receipt_id}</strong><br/>Tarih: {created_at.split(' ')[0]} {created_at.split(' ')[1]}</p>
+                </div>
+                <hr/>
+                <div class="details">
+                    <p><strong>Müşteri:</strong> {name}</p>
+                    <p><strong>Telefon:</strong> {phone}</p>
+                    <p><strong>TC:</strong> {tc}</p>
+                </div>
+                <hr/>
+                <table class="items-table">
+                    <thead>
+                        <tr><th>Ürün</th><th>Adet</th><th>Birim F.</th><th>Toplam</th></tr>
+                    </thead>
+                    <tbody>
+                        {items_html}
+                    </tbody>
+                </table>
+                <hr/>
+                <div class="total">
+                    <p>TOPLAM: {total_price:.2f} ₺</p>
+                </div>
+                <div class="footer">
+                    <p>Bizi tercih ettiğiniz için teşekkür ederiz.</p>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+        return html
+
+    def update_receipt_buttons(self):
+        # Bu fonksiyon, fiş düzenleme modunda buton metinlerini günceller.
+        if self.is_edit_mode:
+            self.save_receipt_button.setText("Fişi Güncelle")
+        else:
+            self.save_receipt_button.setText("Fişi Kaydet")
+
+    def setup_product_tab(self):
+        self.product_tab = QWidget()
+        main_layout = QHBoxLayout(self.product_tab)
+
+        # Ürün Giriş Formu
+        product_form_group = QGroupBox("Ürün Kayıt/Güncelleme")
+        product_form_layout = QVBoxLayout(product_form_group)
+        form_layout = QFormLayout()
+
+        self.product_id_label = QLabel("Yeni Ürün")
+        self.product_id_label.setStyleSheet("font-weight: bold;")
+        self.product_code_edit = QLineEdit()
+        self.product_name_edit = QLineEdit()
+        self.product_price_edit = QLineEdit()
+        self.product_stock_edit = QSpinBox()
+        self.product_stock_edit.setMinimum(0)
+        self.product_min_stock_edit = QSpinBox()
+        self.product_min_stock_edit.setMinimum(0)
+        self.product_description_edit = QTextEdit()
+
+        form_layout.addRow(QLabel("ID:"), self.product_id_label)
+        form_layout.addRow("Ürün Kodu:", self.product_code_edit)
+        form_layout.addRow("Ürün Adı:", self.product_name_edit)
+        form_layout.addRow("Birim Fiyat:", self.product_price_edit)
+        form_layout.addRow("Stok Miktarı:", self.product_stock_edit)
+        form_layout.addRow("Min. Stok:", self.product_min_stock_edit)
+        form_layout.addRow("Açıklama:", self.product_description_edit)
+
+        product_form_layout.addLayout(form_layout)
+
+        # Butonlar
+        product_buttons_layout = QHBoxLayout()
+        self.save_product_button = QPushButton("Kaydet")
+        self.save_product_button.clicked.connect(self.save_product)
+        self.clear_product_button = QPushButton("Yeni Ürün")
+        self.clear_product_button.setProperty("accent", "neutral")
+        self.clear_product_button.clicked.connect(self.clear_product_form)
+
+        product_buttons_layout.addWidget(self.save_product_button)
+        product_buttons_layout.addWidget(self.clear_product_button)
+
+        product_form_layout.addLayout(product_buttons_layout)
+
+        # Ürün Listesi
+        product_list_group = QGroupBox("Ürün Listesi")
+        product_list_layout = QVBoxLayout(product_list_group)
+        self.products_table = QTableWidget()
+        self.products_table.setColumnCount(6)
+        self.products_table.setHorizontalHeaderLabels(["ID", "Ürün Kodu", "Ürün Adı", "Fiyat", "Stok", "Açıklama"])
+        self.products_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.products_table.setColumnHidden(0, True)
+        self.products_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.products_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+
+        product_list_layout.addWidget(self.products_table)
+        self.products_table.cellDoubleClicked.connect(self.edit_product)
+
+        product_main_buttons = QHBoxLayout()
+        self.delete_product_button = QPushButton("Sil")
+        self.delete_product_button.setProperty("danger", True)
+        self.delete_product_button.clicked.connect(self.delete_product_record)
+        product_main_buttons.addStretch()
+        product_main_buttons.addWidget(self.delete_product_button)
+        product_list_layout.addLayout(product_main_buttons)
+
+        main_layout.addWidget(product_form_group, 1)
+        main_layout.addWidget(product_list_group, 2)
+
+    def save_product(self):
+        code = self.product_code_edit.text().strip()
+        name = self.product_name_edit.text().strip()
+        price_text = self.product_price_edit.text().strip().replace(',', '.')
+        stock = self.product_stock_edit.value()
+        min_stock = self.product_min_stock_edit.value()
+        description = self.product_description_edit.toPlainText().strip()
+
+        if not code or not name or not price_text:
+            QMessageBox.warning(self, "Hata", "Ürün kodu, adı ve fiyatı boş bırakılamaz.")
+            return
+
+        try:
+            price = float(price_text)
+        except ValueError:
+            QMessageBox.warning(self, "Hata", "Lütfen geçerli bir fiyat girin.")
+            return
+
+        if self.product_id_label.text() == "Yeni Ürün":
+            try:
+                self.db.insert_product(code, name, price, stock, min_stock, description)
+                QMessageBox.information(self, "Başarılı", "Yeni ürün başarıyla kaydedildi.")
+            except sqlite3.IntegrityError:
+                QMessageBox.warning(self, "Hata", "Bu ürün kodu zaten mevcut.")
+        else:
+            prod_id = int(self.product_id_label.text())
+            self.db.update_product(prod_id, code, name, price, stock, min_stock, description)
+            QMessageBox.information(self, "Başarılı", "Ürün başarıyla güncellendi.")
+
+        self.clear_product_form()
+        self.load_products_table()
+        self.load_all_product_data()
+        self.update_dashboard_data()
+
+    def clear_product_form(self):
+        self.product_id_label.setText("Yeni Ürün")
+        self.product_code_edit.clear()
+        self.product_name_edit.clear()
+        self.product_price_edit.clear()
+        self.product_stock_edit.setValue(0)
+        self.product_min_stock_edit.setValue(5)
+        self.product_description_edit.clear()
+        self.save_product_button.setText("Kaydet")
+        self.product_code_edit.setEnabled(True)
+
+    def load_products_table(self):
+        self.products_table.setRowCount(0)
+        products = self.db.fetch_all_products()
+        self.products_table.setRowCount(len(products))
+        for row_num, row_data in enumerate(products):
+            prod_id, code, name, price, stock, min_stock, description = row_data
+            self.products_table.setItem(row_num, 0, QTableWidgetItem(str(prod_id)))
+            self.products_table.setItem(row_num, 1, QTableWidgetItem(code))
+            self.products_table.setItem(row_num, 2, QTableWidgetItem(name))
+            self.products_table.setItem(row_num, 3, QTableWidgetItem(f"{price:.2f} ₺"))
+            self.products_table.setItem(row_num, 4, QTableWidgetItem(str(stock)))
+            self.products_table.setItem(row_num, 5, QTableWidgetItem(description))
+
+    def edit_product(self, row):
+        prod_id = int(self.products_table.item(row, 0).text())
+        product = self.db.fetch_product_by_id(prod_id)
+        if product:
+            prod_id, code, name, price, stock, min_stock, description = product
+            self.product_id_label.setText(str(prod_id))
+            self.product_code_edit.setText(code)
+            self.product_code_edit.setEnabled(False)  # Ürün kodu değiştirilemez
+            self.product_name_edit.setText(name)
+            self.product_price_edit.setText(f"{price:.2f}")
+            self.product_stock_edit.setValue(stock)
+            self.product_min_stock_edit.setValue(min_stock)
+            self.product_description_edit.setText(description)
+            self.save_product_button.setText("Güncelle")
+
+    def delete_product_record(self):
+        selected_rows = self.products_table.selectionModel().selectedRows()
+        if not selected_rows:
+            QMessageBox.warning(self, "Hata", "Lütfen silinecek bir ürün seçin.")
+            return
+
+        reply = QMessageBox.question(self, "Onay",
+                                     "Seçili ürünü kalıcı olarak silmek istediğinizden emin misiniz? Bu işlem geri alınamaz.",
+                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if reply == QMessageBox.Yes:
+            row_index = selected_rows[0].row()
+            prod_id = int(self.products_table.item(row_index, 0).text())
+            self.db.delete_product(prod_id)
+            self.load_products_table()
+            self.load_all_product_data()
+            self.update_dashboard_data()
+            QMessageBox.information(self, "Başarılı", "Ürün başarıyla silindi.")
+            self.clear_product_form()
+
+    def setup_report_tab(self):
+        self.report_tab = QWidget()
+        main_layout = QVBoxLayout(self.report_tab)
+
+        # Filtreleme
+        filter_group = QGroupBox("Rapor Filtreleri")
+        filter_layout = QHBoxLayout(filter_group)
+
+        filter_layout.addWidget(QLabel("Başlangıç Tarihi:"))
+        self.report_start_date = QDateEdit()
+        self.report_start_date.setCalendarPopup(True)
+        self.report_start_date.setDate(QDate.currentDate().addDays(-30))
+        filter_layout.addWidget(self.report_start_date)
+
+        filter_layout.addWidget(QLabel("Bitiş Tarihi:"))
+        self.report_end_date = QDateEdit()
+        self.report_end_date.setCalendarPopup(True)
+        self.report_end_date.setDate(QDate.currentDate())
+        filter_layout.addWidget(self.report_end_date)
+
+        self.report_button = QPushButton("Raporu Oluştur")
+        self.report_button.clicked.connect(self.update_report_data)
+        filter_layout.addWidget(self.report_button)
+
+        main_layout.addWidget(filter_group)
+
+        # Raporlama Paneli
+        report_panel_layout = QHBoxLayout()
+
+        # Finansal Özet
+        summary_group = QGroupBox("Finansal Özet")
+        summary_layout = QFormLayout(summary_group)
+        self.total_revenue_label = QLabel("0.00 ₺")
+        self.total_other_income_label = QLabel("0.00 ₺")
+        self.total_expenses_label = QLabel("0.00 ₺")
+        self.net_profit_label = QLabel("0.00 ₺")
+
+        self.total_revenue_label.setStyleSheet("font-weight: bold; font-size: 12pt; color: #10b981;")
+        self.total_other_income_label.setStyleSheet("font-weight: bold; font-size: 12pt; color: #10b981;")
+        self.total_expenses_label.setStyleSheet("font-weight: bold; font-size: 12pt; color: #ef4444;")
+        self.net_profit_label.setStyleSheet("font-weight: bold; font-size: 14pt; color: #059669;")
+
+        summary_layout.addRow("Toplam Fiş Geliri:", self.total_revenue_label)
+        summary_layout.addRow("Diğer Gelirler:", self.total_other_income_label)
+        summary_layout.addRow("Toplam Giderler:", self.total_expenses_label)
+        summary_layout.addRow("Net Kar/Zarar:", self.net_profit_label)
+
+        # Ürün Kırılımı
+        product_breakdown_group = QGroupBox("Ürün Kırılımı")
+        product_breakdown_layout = QVBoxLayout(product_breakdown_group)
+        self.report_product_table = QTableWidget()
+        self.report_product_table.setColumnCount(4)
+        self.report_product_table.setHorizontalHeaderLabels(["Ürün Adı", "Ürün Kodu", "Adet", "Toplam Gelir"])
+        self.report_product_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        product_breakdown_layout.addWidget(self.report_product_table)
+
+        report_panel_layout.addWidget(summary_group)
+        report_panel_layout.addWidget(product_breakdown_group)
+
+        main_layout.addLayout(report_panel_layout)
+        main_layout.addStretch()
+
+    def update_report_data(self):
+        start_date = self.report_start_date.date()
+        end_date = self.report_end_date.date()
+
+        if start_date > end_date:
+            QMessageBox.warning(self, "Hata", "Başlangıç tarihi bitiş tarihinden sonra olamaz.")
+            return
+
+        report_data = self.db.fetch_report_data(start_date, end_date)
+
+        total_receipt_revenue = Decimal(report_data['total_revenue'])
+        total_other_income = Decimal(report_data['total_other_income'])
+        total_expenses = Decimal(report_data['total_expenses'])
+
+        net_profit = (total_receipt_revenue + total_other_income) - total_expenses
+
+        self.total_revenue_label.setText(f"{total_receipt_revenue:,.2f} ₺")
+        self.total_other_income_label.setText(f"{total_other_income:,.2f} ₺")
+        self.total_expenses_label.setText(f"{total_expenses:,.2f} ₺")
+        self.net_profit_label.setText(f"{net_profit:,.2f} ₺")
+
+        # Ürün kırılımı tablosunu güncelle
+        self.report_product_table.setRowCount(0)
+        product_breakdown = report_data['product_breakdown']
+        self.report_product_table.setRowCount(len(product_breakdown))
+
+        for row_num, row_data in enumerate(product_breakdown):
+            product_name, product_code, quantity, revenue = row_data
+            self.report_product_table.setItem(row_num, 0, QTableWidgetItem(product_name))
+            self.report_product_table.setItem(row_num, 1, QTableWidgetItem(product_code))
+            self.report_product_table.setItem(row_num, 2, QTableWidgetItem(str(quantity)))
+            self.report_product_table.setItem(row_num, 3, QTableWidgetItem(f"{revenue:,.2f} ₺"))
+
+    def setup_archive_tab(self):
+        self.archive_tab = QWidget()
+        main_layout = QVBoxLayout(self.archive_tab)
+
+        archive_group = QGroupBox("Silinmiş Fiş Arşivi")
+        archive_layout = QVBoxLayout(archive_group)
+
+        self.archive_table = QTableWidget()
+        self.archive_table.setColumnCount(6)
+        self.archive_table.setHorizontalHeaderLabels(
+            ["ID", "Müşteri Adı", "Telefon", "Tarih", "Toplam Tutar", "İşlemler"])
+        self.archive_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.archive_table.setColumnHidden(0, True)
+        self.archive_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.archive_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        archive_layout.addWidget(self.archive_table)
+
+        main_layout.addWidget(archive_group)
+        self.load_archive_table()
+
+    def load_archive_table(self):
+        self.archive_table.setRowCount(0)
+        deleted_receipts = self.db.fetch_all_receipts(only_deleted=True)
+        self.archive_table.setRowCount(len(deleted_receipts))
+
+        for row_num, row_data in enumerate(deleted_receipts):
+            rec_id, name, phone, address, tc, created_at, is_deleted = row_data
+
+            items = self.db.fetch_receipt_items(rec_id)
+            total_amount = sum(item[2] * item[3] for item in items)
+
+            self.archive_table.setItem(row_num, 0, QTableWidgetItem(str(rec_id)))
+            self.archive_table.setItem(row_num, 1, QTableWidgetItem(name))
+            self.archive_table.setItem(row_num, 2, QTableWidgetItem(phone))
+            self.archive_table.setItem(row_num, 3, QTableWidgetItem(created_at.split(' ')[0]))
+            self.archive_table.setItem(row_num, 4, QTableWidgetItem(f"{total_amount:,.2f} ₺"))
+
+            actions_widget = QWidget()
+            actions_layout = QHBoxLayout(actions_widget)
+            actions_layout.setContentsMargins(0, 0, 0, 0)
+            actions_layout.setAlignment(Qt.AlignCenter)
+
+            restore_button = QPushButton("Geri Al")
+            restore_button.clicked.connect(lambda _, r=rec_id: self.restore_receipt_record(r))
+
+            delete_button = QPushButton("Kalıcı Sil")
+            delete_button.clicked.connect(lambda _, r=rec_id: self.hard_delete_receipt_record(r))
+            delete_button.setProperty("danger", True)
+
+            actions_layout.addWidget(restore_button)
+            actions_layout.addWidget(delete_button)
+
+            self.archive_table.setCellWidget(row_num, 5, actions_widget)
+
+    def setup_accounting_tab(self):
+        self.accounting_tab = QWidget()
+        main_layout = QHBoxLayout(self.accounting_tab)
+
+        # Giriş/Gider Kayıt Formu
+        form_group = QGroupBox("Gelir/Gider Kaydı")
+        form_layout = QVBoxLayout(form_group)
+
+        input_form_layout = QFormLayout()
+        self.accounting_type_combo = QComboBox()
+        self.accounting_type_combo.addItems(["income", "expense"])
+        self.accounting_type_combo.setItemText(0, "Gelir")
+        self.accounting_type_combo.setItemText(1, "Gider")
+
+        self.accounting_description_input = QLineEdit()
+        self.accounting_description_input.setPlaceholderText("Açıklama (Örn: Kira geliri, Elektrik faturası)")
+
+        self.accounting_amount_input = QLineEdit()
+        self.accounting_amount_input.setValidator(QDoubleValidator(0.00, 999999999.99, 2))
+
+        input_form_layout.addRow("Tipi:", self.accounting_type_combo)
+        input_form_layout.addRow("Açıklama:", self.accounting_description_input)
+        input_form_layout.addRow("Miktar (₺):", self.accounting_amount_input)
+
+        save_button = QPushButton("Kaydet")
+        save_button.clicked.connect(self.save_accounting_record)
+
+        form_layout.addLayout(input_form_layout)
+        form_layout.addWidget(save_button)
+        form_layout.addStretch()
+
+        # Gelir/Gider Listesi
+        list_group = QGroupBox("Muhasebe Kayıtları")
+        list_layout = QVBoxLayout(list_group)
+
+        # Filtreleme
+        filter_layout = QHBoxLayout()
+        filter_layout.addWidget(QLabel("Başlangıç Tarihi:"))
+        self.accounting_start_date = QDateEdit()
+        self.accounting_start_date.setCalendarPopup(True)
+        self.accounting_start_date.setDate(QDate.currentDate().addDays(-30))
+        filter_layout.addWidget(self.accounting_start_date)
+
+        filter_layout.addWidget(QLabel("Bitiş Tarihi:"))
+        self.accounting_end_date = QDateEdit()
+        self.accounting_end_date.setCalendarPopup(True)
+        self.accounting_end_date.setDate(QDate.currentDate())
+        filter_layout.addWidget(self.accounting_end_date)
+
+        filter_button = QPushButton("Filtrele")
+        filter_button.clicked.connect(self.load_accounting_table)
+        filter_layout.addWidget(filter_button)
+
+        list_layout.addLayout(filter_layout)
+
+        self.accounting_table = QTableWidget()
+        self.accounting_table.setColumnCount(5)
+        self.accounting_table.setHorizontalHeaderLabels(["ID", "Tipi", "Açıklama", "Miktar (₺)", "Tarih"])
+        self.accounting_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.accounting_table.setColumnHidden(0, True)
+        self.accounting_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.accounting_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+
+        list_layout.addWidget(self.accounting_table)
+
+        delete_button = QPushButton("Seçili Kaydı Sil")
+        delete_button.setProperty("danger", True)
+        delete_button.clicked.connect(self.delete_accounting_record)
+        list_layout.addWidget(delete_button)
+
+        main_layout.addWidget(form_group, 1)
+        main_layout.addWidget(list_group, 2)
+
+    def save_accounting_record(self):
+        record_type = "income" if self.accounting_type_combo.currentIndex() == 0 else "expense"
+        description = self.accounting_description_input.text().strip()
+        amount_text = self.accounting_amount_input.text().strip().replace(',', '.')
+
+        if not description or not amount_text:
+            QMessageBox.warning(self, "Hata", "Açıklama ve miktar boş bırakılamaz.")
+            return
+
+        try:
+            amount = float(amount_text)
+            self.db.insert_income_expense(record_type, description, amount)
+            QMessageBox.information(self, "Başarılı", "Kayıt başarıyla eklendi.")
+            self.accounting_description_input.clear()
+            self.accounting_amount_input.clear()
+            self.load_accounting_table()
+            self.update_dashboard_data()
+        except ValueError:
+            QMessageBox.warning(self, "Hata", "Lütfen geçerli bir miktar girin.")
+
+    def load_accounting_table(self):
+        self.accounting_table.setRowCount(0)
+        start_date = self.accounting_start_date.date()
+        end_date = self.accounting_end_date.date()
+
+        records = self.db.fetch_all_income_expenses(start_date, end_date)
+        self.accounting_table.setRowCount(len(records))
+
+        for row_num, row_data in enumerate(records):
+            rec_id, record_type, description, amount, created_at = row_data
+
+            # Tip metnini ve rengini ayarla
+            type_text = "Gelir" if record_type == "income" else "Gider"
+            color = QColor("#10b981") if record_type == "income" else QColor("#ef4444")
+
+            id_item = QTableWidgetItem(str(rec_id))
+            type_item = QTableWidgetItem(type_text)
+            description_item = QTableWidgetItem(description)
+            amount_item = QTableWidgetItem(f"{amount:,.2f} ₺")
+            date_item = QTableWidgetItem(created_at.split(' ')[0])
+
+            type_item.setForeground(color)
+            amount_item.setForeground(color)
+
+            self.accounting_table.setItem(row_num, 0, id_item)
+            self.accounting_table.setItem(row_num, 1, type_item)
+            self.accounting_table.setItem(row_num, 2, description_item)
+            self.accounting_table.setItem(row_num, 3, amount_item)
+            self.accounting_table.setItem(row_num, 4, date_item)
+
+    def delete_accounting_record(self):
+        selected_rows = self.accounting_table.selectionModel().selectedRows()
+        if not selected_rows:
+            QMessageBox.warning(self, "Hata", "Lütfen silinecek bir kayıt seçin.")
+            return
+
+        reply = QMessageBox.question(self, "Onay",
+                                     "Seçili kaydı silmek istediğinizden emin misiniz? Bu işlem geri alınamaz.",
+                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if reply == QMessageBox.Yes:
+            row_index = selected_rows[0].row()
+            rec_id = int(self.accounting_table.item(row_index, 0).text())
+            self.db.delete_income_expense(rec_id)
+            self.load_accounting_table()
+            self.update_dashboard_data()
+            QMessageBox.information(self, "Başarılı", "Kayıt başarıyla silindi.")
+
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+
+    # login_window = LoginWindow()
+    # main_window = MainWindow()
+
+    # def show_main_window():
+    #     main_window.show()
+    #
+    # login_window.login_successful.connect(show_main_window)
+    # login_window.show()
+
+    # Login ekranı atlanıp direkt ana ekrana geçilmesi için
+    # Yukarıdaki satırlar yerine doğrudan main_window'u göster
+    main_window = MainWindow()
+    main_window.show()
+
+    sys.exit(app.exec())
